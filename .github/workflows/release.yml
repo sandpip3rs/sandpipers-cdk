@@ -1,0 +1,82 @@
+#  Licensed to Muhammad Hamadto
+#
+#   Licensed under the Apache License, Version 2.0 (the "License");
+#   you may not use this file except in compliance with the License.
+#   You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+#   See the NOTICE file distributed with this work for additional information regarding copyright ownership.
+#
+#   Unless required by applicable law or agreed to in writing, software
+#   distributed under the License is distributed on an "AS IS" BASIS,
+#   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#   See the License for the specific language governing permissions and
+#   limitations under the License.
+
+name: Publish package to Maven Central
+
+on:
+  release:
+    types: [published]
+
+env:
+  SONATYPE_USERNAME: ${{ secrets.SONATYPE_USERNAME }}
+  SONATYPE_TOKEN: ${{ secrets.SONATYPE_TOKEN }}
+  GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+  GPG_PASSPHRASE: ${{ secrets.MAVEN_GPG_PASSPHRASE }}
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Java with GPG key import
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Enable loopback pinentry for gpg-agent
+        run: |
+          mkdir -p ~/.gnupg
+          echo "allow-loopback-pinentry" >> ~/.gnupg/gpg-agent.conf
+          gpgconf --kill gpg-agent
+
+      - name: Configure Maven settings for Sonatype
+        run: |
+          mkdir -p $HOME/.m2
+          cat > $HOME/.m2/settings.xml <<EOF
+          <settings xmlns="http://maven.apache.org/SETTINGS/1.0.0"
+                    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                    xsi:schemaLocation="http://maven.apache.org/SETTINGS/1.0.0
+                                        https://maven.apache.org/xsd/settings-1.0.0.xsd">
+            <servers>
+              <server>
+                <id>central</id>
+                <username>${SONATYPE_USERNAME}</username>
+                <password>${SONATYPE_TOKEN}</password>
+              </server>
+            </servers>
+          </settings>
+          EOF
+
+      - name: Import GPG key
+        run: |
+          echo "$GPG_PRIVATE_KEY" | gpg --batch --yes --import
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+
+      - name: Verify GPG key import
+        run: gpg --list-secret-keys --keyid-format LONG
+
+      - name: Deploy with Maven central
+        run: mvn clean deploy -Prelease --batch-mode --no-transfer-progress -e -X -Dgpg.passphrase="${{ env.GPG_PASSPHRASE }}"
+        env:
+          MAVEN_USERNAME: ${{ env.SONATYPE_USERNAME }}
+          MAVEN_PASSWORD: ${{ env.SONATYPE_TOKEN }}
